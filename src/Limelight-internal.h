@@ -87,6 +87,9 @@ extern uint32_t EncryptionFeaturesEnabled;
 // Client feature flags for x-ml-general.featureFlags SDP attribute
 #define ML_FF_FEC_STATUS 0x01 // Client sends SS_FRAME_FEC_STATUS for frame losses
 #define ML_FF_SESSION_ID_V1 0x02 // Client supports X-SS-Ping-Payload and X-SS-Connect-Data
+// Client parses the PyroWave active-block sideband, requested only when the
+// host advertised LI_FF_PYROWAVE_ACTIVE_BLOCK_MASK.
+#define ML_FF_PYROWAVE_ACTIVE_BLOCK_MASK 0x04
 
 #define UDP_RECV_POLL_TIMEOUT_MS 100
 
