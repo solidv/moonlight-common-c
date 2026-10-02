@@ -1032,6 +1032,9 @@ void LiRequestIdrFrame(void);
 // This function returns any extended feature flags supported by the host.
 #define LI_FF_PEN_TOUCH_EVENTS        0x01 // LiSendTouchEvent()/LiSendPenEvent() supported
 #define LI_FF_CONTROLLER_TOUCH_EVENTS 0x02 // LiSendControllerTouchEvent() supported
+// Host accepts ML_FF_PYROWAVE_ACTIVE_BLOCK_MASK and prefixes each PyroWave
+// decode unit with the mask of transmitted blocks in the FEC-protected bands.
+#define LI_FF_PYROWAVE_ACTIVE_BLOCK_MASK 0x04
 uint32_t LiGetHostFeatureFlags(void);
 
 #ifdef __cplusplus

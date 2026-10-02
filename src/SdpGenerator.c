@@ -270,6 +270,14 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
     if (IS_SUNSHINE()) {
         // Send client feature flags to Sunshine hosts
         uint32_t moonlightFeatureFlags = ML_FF_FEC_STATUS | ML_FF_SESSION_ID_V1;
+
+        // Request the PyroWave active-block sideband back when the host advertised
+        // it in the DESCRIBE reply. SunshineFeatureFlags was parsed from
+        // x-ss-general.featureFlags earlier in the handshake (DESCRIBE precedes ANNOUNCE).
+        if (SunshineFeatureFlags & LI_FF_PYROWAVE_ACTIVE_BLOCK_MASK) {
+            moonlightFeatureFlags |= ML_FF_PYROWAVE_ACTIVE_BLOCK_MASK;
+        }
+
         snprintf(payloadStr, sizeof(payloadStr), "%" PRIu32, moonlightFeatureFlags);
         err |= addAttributeString(&optionHead, "x-ml-general.featureFlags", payloadStr);
 
