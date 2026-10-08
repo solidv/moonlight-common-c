@@ -17,9 +17,36 @@
 // RTP packets use a 90 KHz presentation timestamp clock
 #define PTS_DIVISOR 90
 
+static void recordFinalPacketStats(PRTP_VIDEO_QUEUE queue) {
+    if (queue->statsReportedForBlock || queue->bufferDataPackets == 0) {
+        return;
+    }
+    uint32_t missing = queue->bufferDataPackets - queue->receivedDataPackets;
+    LC_ASSERT(queue->recoveredDataPackets <= missing);
+    PltLockMutex(&queue->statsMutex);
+    queue->stats.packetCountLostVideo += missing;
+    queue->stats.packetCountFecRecovered += queue->recoveredDataPackets;
+    queue->stats.packetCountFecFailed += missing - queue->recoveredDataPackets;
+    PltUnlockMutex(&queue->statsMutex);
+    queue->statsReportedForBlock = true;
+}
+
+bool RtpvGetStatsSnapshot(PRTP_VIDEO_QUEUE queue, PRTP_VIDEO_STATS stats) {
+    if (!stats) {
+        return false;
+    }
+    PltLockMutex(&queue->statsMutex);
+    queue->stats.packetCountVideoExpected = atomic_load(&queue->packetCountVideoExpected);
+    queue->stats.packetCountVideoReceived = atomic_load(&queue->packetCountVideoReceived);
+    *stats = queue->stats;
+    PltUnlockMutex(&queue->statsMutex);
+    return true;
+}
+
 void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue) {
     reed_solomon_init();
     memset(queue, 0, sizeof(*queue));
+    PltCreateMutex(&queue->statsMutex);
 
     queue->currentFrameNumber = 1;
     queue->multiFecCapable = APP_VERSION_AT_LEAST(7, 1, 431);
@@ -42,8 +69,10 @@ static void purgeListEntries(PRTPV_QUEUE_LIST list) {
 }
 
 void RtpvCleanupQueue(PRTP_VIDEO_QUEUE queue) {
+    recordFinalPacketStats(queue);
     purgeListEntries(&queue->pendingFecBlockList);
     purgeListEntries(&queue->completedFecBlockList);
+    PltDeleteMutex(&queue->statsMutex);
 }
 
 static void insertEntryIntoList(PRTPV_QUEUE_LIST list, PRTPV_QUEUE_ENTRY entry) {
@@ -454,7 +483,9 @@ cleanup_packets:
                 // it may be a legitimate part of the H.264 bytestream.
 
                 LC_ASSERT(isBefore16(rtpPacket->sequenceNumber, queue->bufferFirstParitySequenceNumber));
-                queuePacket(queue, queueEntry, rtpPacket, StreamConfig.packetSize + dataOffset, false, true);
+                if (queuePacket(queue, queueEntry, rtpPacket, StreamConfig.packetSize + dataOffset, false, true)) {
+                    queue->recoveredDataPackets++;
+                }
             } else if (packets[i] != NULL) {
                 free(packets[i]);
             }
@@ -474,6 +505,7 @@ cleanup:
 }
 
 static void stageCompleteFecBlock(PRTP_VIDEO_QUEUE queue) {
+    recordFinalPacketStats(queue);
     unsigned int nextSeqNum = queue->bufferLowestSequenceNumber;
 
     while (queue->pendingFecBlockList.count > 0) {
@@ -691,6 +723,7 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         if (queue->pendingFecBlockList.count != 0) {
             // Report the final status of the FEC queue before dropping this frame
             reportFinalFrameFecStatus(queue);
+            recordFinalPacketStats(queue);
 
             if (queue->multiFecLastBlockNumber != 0) {
                 Limelog("Unrecoverable frame %d (block %d of %d): %d+%d=%d received < %d needed\n",
@@ -797,6 +830,8 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         queue->nextContiguousSequenceNumber = queue->bufferLowestSequenceNumber;
         queue->receivedDataPackets = 0;
         queue->receivedParityPackets = 0;
+        queue->recoveredDataPackets = 0;
+        queue->statsReportedForBlock = false;
         queue->receivedHighestSequenceNumber = 0;
         queue->missingPackets = 0;
         queue->useFastQueuePath = true;
@@ -809,8 +844,7 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         queue->multiFecCurrentBlockNumber = fecCurrentBlockNumber;
         queue->multiFecLastBlockNumber = (nvPacket->multiFecBlocks >> 6) & 0x3;
 
-        queue->stats.packetCountVideo += queue->bufferDataPackets;
-        queue->stats.packetCountFec += queue->bufferParityPackets;
+        atomic_fetch_add(&queue->packetCountVideoExpected, queue->bufferDataPackets + queue->bufferParityPackets);
     }
 
     // Reject packets above our FEC queue valid sequence number range
